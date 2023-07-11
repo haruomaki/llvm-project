@@ -1,0 +1,23 @@
+_ = "-S llvm -B build -G Ninja"
+
+CMAKE_BUILD_TYPE = "RelWithDebInfo"
+CMAKE_C_COMPILER = "/usr/bin/clang"
+CMAKE_CXX_COMPILER = "/usr/bin/clang++"
+CMAKE_INSTALL_PREFIX = "/opt/clang17"
+
+DEFAULT_SYSROOT = ""
+LLVM_ENABLE_PROJECTS = 'clang;clang-tools-extra'
+LLVM_ENABLE_RUNTIMES = 'compiler-rt;libcxx;libcxxabi;libunwind'
+LLVM_CCACHE_BUILD = true
+LLVM_USE_SPLIT_DWARF = true
+LLVM_OPTIMIZED_TABLEGEN = true
+BUILD_SHARED_LIBS = true
+LLVM_ENABLE_LLVM_LIBC = false
+LLVM_ENABLE_LIBCXX = false
+LLVM_TARGETS_TO_BUILD = "X86"
+LLVM_ENABLE_LLD = true
+
+CLANG_DEFAULT_LINKER = "lld"
+CLANG_DEFAULT_CXX_STDLIB = "libc++"
+CLANG_DEFAULT_RTLIB = "compiler-rt"
+CLANG_DEFAULT_UNWINDLIB = "libunwind"
