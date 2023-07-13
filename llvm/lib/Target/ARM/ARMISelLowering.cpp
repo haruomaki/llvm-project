@@ -7070,6 +7070,10 @@ SDValue ARMTargetLowering::LowerConstantFP(SDValue Op, SelectionDAG &DAG,
   // Prevent floating-point constants from using literal loads
   // when execute-only is enabled.
   if (ST->genExecuteOnly()) {
+    // We shouldn't trigger this for v6m execute-only
+    assert((!ST->isThumb1Only() || ST->hasV8MBaselineOps()) &&
+           "Unexpected architecture");
+
     // If we can represent the constant as an immediate, don't lower it
     if (isFPImmLegal(FPVal, VT))
       return Op;
@@ -11365,6 +11369,21 @@ static void emitPostSt(MachineBasicBlock *BB, MachineBasicBlock::iterator Pos,
   }
 }
 
+// Get the SP adjustment just before MI.
+int ARMTargetLowering::getSPAdjustment(MachineInstr &MI) const {
+  const ARMBaseInstrInfo *TII = Subtarget->getInstrInfo();
+
+  // Search backwards from MI for the most recent call frame setup instruction.
+  MachineBasicBlock *MBB = MI.getParent();
+  for (auto &AdjI : reverse(make_range(MBB->instr_begin(), MI.getIterator()))) {
+    if (AdjI.getOpcode() == ARM::ADJCALLSTACKDOWN)
+      return TII->getSPAdjust(AdjI);
+  }
+
+  // If none was found, use the SP adjustment from the start of the basic block.
+  return MBB->getSPAdjustment();
+}
+
 MachineBasicBlock *
 ARMTargetLowering::EmitStructByval(MachineInstr &MI,
                                    MachineBasicBlock *BB) const {
@@ -11480,6 +11499,11 @@ ARMTargetLowering::EmitStructByval(MachineInstr &MI,
   MachineBasicBlock *exitMBB = MF->CreateMachineBasicBlock(LLVM_BB);
   MF->insert(It, loopMBB);
   MF->insert(It, exitMBB);
+
+  // Set the SP adjustment on entry to the new basic blocks.
+  int SPAdj = getSPAdjustment(MI);
+  loopMBB->setSPAdjustment(SPAdj);
+  exitMBB->setSPAdjustment(SPAdj);
 
   // Transfer the remainder of BB and its successor edges to exitMBB.
   exitMBB->splice(exitMBB->begin(), BB,

@@ -344,6 +344,9 @@ module std [system] {
       module pstl_backends_cpu_backends_for_each {
         private header "__algorithm/pstl_backends/cpu_backends/for_each.h"
       }
+      module pstl_backends_cpu_backends_libdispatch {
+        private header "__algorithm/pstl_backends/cpu_backends/libdispatch.h"
+      }
       module pstl_backends_cpu_backends_merge {
         private header "__algorithm/pstl_backends/cpu_backends/merge.h"
       }
@@ -1368,6 +1371,10 @@ module std [system] {
     // FIXME: should re-export ios, streambuf?
     export *
   }
+  module print {
+    header "print"
+    export *
+  }
   module queue {
     header "queue"
     export *
@@ -1619,6 +1626,7 @@ module std [system] {
 
     module __thread {
       module formatter            { private header "__thread/formatter.h" }
+      module id                   { private header "__thread/id.h" }
       module poll_with_backoff    { private header "__thread/poll_with_backoff.h" }
       module this_thread          { private header "__thread/this_thread.h" }
       module thread               { private header "__thread/thread.h" }

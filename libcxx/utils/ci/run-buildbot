@@ -247,6 +247,7 @@ check-generated-output)
            --exclude 'locale-specific_form.pass.cpp' \
            --exclude 'ostream.pass.cpp' \
            --exclude 'std_format_spec_string_unicode.bench.cpp' \
+           --exclude 'transcoding.pass.cpp' \
            --exclude 'underflow.pass.cpp' \
            || false
 
@@ -384,6 +385,18 @@ generic-merged)
 generic-assertions)
     clean
     generate-cmake -C "${MONOREPO_ROOT}/libcxx/cmake/caches/Generic-assertions.cmake"
+    check-runtimes
+    check-abi-list
+;;
+generic-hardened-mode)
+    clean
+    generate-cmake -C "${MONOREPO_ROOT}/libcxx/cmake/caches/Generic-hardened-mode.cmake"
+    check-runtimes
+    check-abi-list
+;;
+generic-debug-mode)
+    clean
+    generate-cmake -C "${MONOREPO_ROOT}/libcxx/cmake/caches/Generic-debug-mode.cmake"
     check-runtimes
     check-abi-list
 ;;

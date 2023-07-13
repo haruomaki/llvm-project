@@ -78,6 +78,7 @@ set(files
   __algorithm/pstl_backends/cpu_backends/fill.h
   __algorithm/pstl_backends/cpu_backends/find_if.h
   __algorithm/pstl_backends/cpu_backends/for_each.h
+  __algorithm/pstl_backends/cpu_backends/libdispatch.h
   __algorithm/pstl_backends/cpu_backends/merge.h
   __algorithm/pstl_backends/cpu_backends/serial.h
   __algorithm/pstl_backends/cpu_backends/stable_sort.h
@@ -676,6 +677,7 @@ set(files
   __system_error/error_condition.h
   __system_error/system_error.h
   __thread/formatter.h
+  __thread/id.h
   __thread/poll_with_backoff.h
   __thread/this_thread.h
   __thread/thread.h
@@ -955,6 +957,7 @@ set(files
   numeric
   optional
   ostream
+  print
   queue
   random
   ranges
