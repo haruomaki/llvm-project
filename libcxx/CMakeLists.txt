@@ -227,6 +227,8 @@ option(LIBCXX_STATICALLY_LINK_ABI_IN_SHARED_LIBRARY
   "Statically link the ABI library to shared library"
   ${LIBCXX_ENABLE_STATIC_ABI_LIBRARY})
 
+message(AUTHOR_WARNING "🥺🥺🥺🥺🥺 ${LIBCXX_ENABLE_STATIC_ABI_LIBRARY} ${LIBCXX_STATICALLY_LINK_ABI_IN_STATIC_LIBRARY} ${LIBCXX_STATICALLY_LINK_ABI_IN_SHARED_LIBRARY}")
+
 # Generate and install a linker script inplace of libc++.so. The linker script
 # will link libc++ to the correct ABI library. This option is on by default
 # on UNIX platforms other than Apple unless
