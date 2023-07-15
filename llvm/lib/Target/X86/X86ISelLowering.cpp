@@ -396,6 +396,9 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
   if (!Subtarget.useSoftFloat() && Subtarget.hasX87()) {
     setOperationAction(ISD::GET_ROUNDING   , MVT::i32  , Custom);
     setOperationAction(ISD::SET_ROUNDING   , MVT::Other, Custom);
+    setOperationAction(ISD::GET_FPENV_MEM  , MVT::Other, Custom);
+    setOperationAction(ISD::SET_FPENV_MEM  , MVT::Other, Custom);
+    setOperationAction(ISD::RESET_FPENV    , MVT::Other, Custom);
   }
 
   // Promote the i8 variants and force them on up to i32 which has a shorter
@@ -3851,13 +3854,10 @@ X86TargetLowering::LowerMemArgument(SDValue Chain, CallingConv::ID CallConv,
 
   EVT ArgVT = Ins[i].ArgVT;
 
-  // If this is a vector that has been split into multiple parts, and the
-  // scalar size of the parts don't match the vector element size, then we can't
-  // elide the copy. The parts will have padding between them instead of being
-  // packed like a vector.
-  bool ScalarizedAndExtendedVector =
-      ArgVT.isVector() && !VA.getLocVT().isVector() &&
-      VA.getLocVT().getSizeInBits() != ArgVT.getScalarSizeInBits();
+  // If this is a vector that has been split into multiple parts, don't elide
+  // the copy. The layout on the stack may not match the packed in-memory
+  // layout.
+  bool ScalarizedVector = ArgVT.isVector() && !VA.getLocVT().isVector();
 
   // This is an argument in memory. We might be able to perform copy elision.
   // If the argument is passed directly in memory without any extension, then we
@@ -3865,7 +3865,7 @@ X86TargetLowering::LowerMemArgument(SDValue Chain, CallingConv::ID CallConv,
   // indirectly by pointer.
   if (Flags.isCopyElisionCandidate() &&
       VA.getLocInfo() != CCValAssign::Indirect && !ExtendedInMem &&
-      !ScalarizedAndExtendedVector) {
+      !ScalarizedVector) {
     SDValue PartAddr;
     if (Ins[i].PartOffset == 0) {
       // If this is a one-part value or the first part of a multi-part value,
@@ -30071,6 +30071,122 @@ SDValue X86TargetLowering::LowerSET_ROUNDING(SDValue Op,
   return Chain;
 }
 
+const unsigned X87StateSize = 28;
+const unsigned FPStateSize = 32;
+[[maybe_unused]] const unsigned FPStateSizeInBits = FPStateSize * 8;
+
+SDValue X86TargetLowering::LowerGET_FPENV_MEM(SDValue Op,
+                                              SelectionDAG &DAG) const {
+  MachineFunction &MF = DAG.getMachineFunction();
+  SDLoc DL(Op);
+  SDValue Chain = Op->getOperand(0);
+  SDValue Ptr = Op->getOperand(1);
+  auto *Node = cast<FPStateAccessSDNode>(Op);
+  EVT MemVT = Node->getMemoryVT();
+  assert(MemVT.getSizeInBits() == FPStateSizeInBits);
+  MachineMemOperand *MMO = cast<FPStateAccessSDNode>(Op)->getMemOperand();
+
+  // Get x87 state, if it presents.
+  if (Subtarget.hasX87()) {
+    Chain =
+        DAG.getMemIntrinsicNode(X86ISD::FNSTENVm, DL, DAG.getVTList(MVT::Other),
+                                {Chain, Ptr}, MemVT, MMO);
+
+    // FNSTENV changes the exception mask, so load back the stored environment.
+    MachineMemOperand::Flags NewFlags =
+        MachineMemOperand::MOLoad |
+        (MMO->getFlags() & ~MachineMemOperand::MOStore);
+    MMO = MF.getMachineMemOperand(MMO, NewFlags);
+    Chain =
+        DAG.getMemIntrinsicNode(X86ISD::FLDENVm, DL, DAG.getVTList(MVT::Other),
+                                {Chain, Ptr}, MemVT, MMO);
+  }
+
+  // If target supports SSE, get MXCSR as well.
+  if (Subtarget.hasSSE1()) {
+    // Get pointer to the MXCSR location in memory.
+    MVT PtrVT = DAG.getTargetLoweringInfo().getPointerTy(DAG.getDataLayout());
+    SDValue MXCSRAddr = DAG.getNode(ISD::ADD, DL, PtrVT, Ptr,
+                                    DAG.getConstant(X87StateSize, DL, PtrVT));
+    // Store MXCSR into memory.
+    Chain = DAG.getNode(
+        ISD::INTRINSIC_VOID, DL, DAG.getVTList(MVT::Other), Chain,
+        DAG.getTargetConstant(Intrinsic::x86_sse_stmxcsr, DL, MVT::i32),
+        MXCSRAddr);
+  }
+
+  return Chain;
+}
+
+static SDValue createSetFPEnvNodes(SDValue Ptr, SDValue Chain, SDLoc DL,
+                                   EVT MemVT, MachineMemOperand *MMO,
+                                   SelectionDAG &DAG,
+                                   const X86Subtarget &Subtarget) {
+  // Set x87 state, if it presents.
+  if (Subtarget.hasX87())
+    Chain =
+        DAG.getMemIntrinsicNode(X86ISD::FLDENVm, DL, DAG.getVTList(MVT::Other),
+                                {Chain, Ptr}, MemVT, MMO);
+  // If target supports SSE, set MXCSR as well.
+  if (Subtarget.hasSSE1()) {
+    // Get pointer to the MXCSR location in memory.
+    MVT PtrVT = DAG.getTargetLoweringInfo().getPointerTy(DAG.getDataLayout());
+    SDValue MXCSRAddr = DAG.getNode(ISD::ADD, DL, PtrVT, Ptr,
+                                    DAG.getConstant(X87StateSize, DL, PtrVT));
+    // Load MXCSR from memory.
+    Chain = DAG.getNode(
+        ISD::INTRINSIC_VOID, DL, DAG.getVTList(MVT::Other), Chain,
+        DAG.getTargetConstant(Intrinsic::x86_sse_ldmxcsr, DL, MVT::i32),
+        MXCSRAddr);
+  }
+  return Chain;
+}
+
+SDValue X86TargetLowering::LowerSET_FPENV_MEM(SDValue Op,
+                                              SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  SDValue Chain = Op->getOperand(0);
+  SDValue Ptr = Op->getOperand(1);
+  auto *Node = cast<FPStateAccessSDNode>(Op);
+  EVT MemVT = Node->getMemoryVT();
+  assert(MemVT.getSizeInBits() == FPStateSizeInBits);
+  MachineMemOperand *MMO = cast<FPStateAccessSDNode>(Op)->getMemOperand();
+  return createSetFPEnvNodes(Ptr, Chain, DL, MemVT, MMO, DAG, Subtarget);
+}
+
+SDValue X86TargetLowering::LowerRESET_FPENV(SDValue Op,
+                                            SelectionDAG &DAG) const {
+  MachineFunction &MF = DAG.getMachineFunction();
+  SDLoc DL(Op);
+  SDValue Chain = Op.getNode()->getOperand(0);
+
+  IntegerType *ItemTy = Type::getInt32Ty(*DAG.getContext());
+  ArrayType *FPEnvTy = ArrayType::get(ItemTy, 8);
+  SmallVector<Constant *, 8> FPEnvVals;
+
+  // x87 FPU Control Word: mask all floating-point exceptions, sets rounding to
+  // nearest. FPU precision is set to 53 bits on Windows and 64 bits otherwise
+  // for compatibility with glibc.
+  unsigned X87CW = Subtarget.isTargetWindowsMSVC() ? 0x27F : 0x37F;
+  FPEnvVals.push_back(ConstantInt::get(ItemTy, X87CW));
+  Constant *Zero = ConstantInt::get(ItemTy, 0);
+  for (unsigned I = 0; I < 6; ++I)
+    FPEnvVals.push_back(Zero);
+
+  // MXCSR: mask all floating-point exceptions, sets rounding to nearest, clear
+  // all exceptions, sets DAZ and FTZ to 0.
+  FPEnvVals.push_back(ConstantInt::get(ItemTy, 0x1F80));
+  Constant *FPEnvBits = ConstantArray::get(FPEnvTy, FPEnvVals);
+  MVT PtrVT = DAG.getTargetLoweringInfo().getPointerTy(DAG.getDataLayout());
+  SDValue Env = DAG.getConstantPool(FPEnvBits, PtrVT);
+  MachinePointerInfo MPI =
+      MachinePointerInfo::getConstantPool(DAG.getMachineFunction());
+  MachineMemOperand *MMO = MF.getMachineMemOperand(
+      MPI, MachineMemOperand::MOStore, X87StateSize, Align(4));
+
+  return createSetFPEnvNodes(Env, Chain, DL, MVT::i32, MMO, DAG, Subtarget);
+}
+
 /// Lower a vector CTLZ using native supported vector CTLZ instruction.
 //
 // i8/i16 vector implemented using dword LZCNT vector instruction
@@ -34323,6 +34439,9 @@ SDValue X86TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::ADJUST_TRAMPOLINE:  return LowerADJUST_TRAMPOLINE(Op, DAG);
   case ISD::GET_ROUNDING:       return LowerGET_ROUNDING(Op, DAG);
   case ISD::SET_ROUNDING:       return LowerSET_ROUNDING(Op, DAG);
+  case ISD::GET_FPENV_MEM:      return LowerGET_FPENV_MEM(Op, DAG);
+  case ISD::SET_FPENV_MEM:      return LowerSET_FPENV_MEM(Op, DAG);
+  case ISD::RESET_FPENV:        return LowerRESET_FPENV(Op, DAG);
   case ISD::CTLZ:
   case ISD::CTLZ_ZERO_UNDEF:    return LowerCTLZ(Op, Subtarget, DAG);
   case ISD::CTTZ:
@@ -35565,6 +35684,8 @@ const char *X86TargetLowering::getTargetNodeName(unsigned Opcode) const {
   NODE_NAME_CASE(TC_RETURN)
   NODE_NAME_CASE(FNSTCW16m)
   NODE_NAME_CASE(FLDCW16m)
+  NODE_NAME_CASE(FNSTENVm)
+  NODE_NAME_CASE(FLDENVm)
   NODE_NAME_CASE(LCMPXCHG_DAG)
   NODE_NAME_CASE(LCMPXCHG8_DAG)
   NODE_NAME_CASE(LCMPXCHG16_DAG)
@@ -41024,24 +41145,6 @@ static SDValue canonicalizeShuffleMaskWithHorizOp(
           Res = DAG.getBitcast(ShuffleVT, Res);
           return DAG.getNode(X86ISD::SHUFP, DL, ShuffleVT, Res, Res,
                              getV4X86ShuffleImm8ForMask(PostMask, DL, DAG));
-        }
-      }
-      // permute(pack(x,y)) -> pack(shuffle(x,y),undef)
-      if (!isHoriz && Ops.size() == 1 && NumLanes == 1 &&
-          isUndefInRange(ScaledMask, 2, 2)) {
-        int M0 = ScaledMask[0];
-        int M1 = ScaledMask[1];
-        if (isInRange(M0, 0, 4) && isInRange(M1, 0, 4)) {
-          // Use SHUFPD for the permute so this will work on SSE2 targets,
-          // shuffle combining and domain handling will simplify this later on.
-          unsigned SHUFPDMask = (M0 & 1) | ((M1 & 1) << 1);
-          SDValue LHS = DAG.getBitcast(MVT::v2f64, BC[0].getOperand(M0 >= 2));
-          SDValue RHS = DAG.getBitcast(MVT::v2f64, BC[0].getOperand(M1 >= 2));
-          SDValue Res =
-              DAG.getNode(X86ISD::SHUFP, DL, MVT::v2f64, LHS, RHS,
-                          DAG.getTargetConstant(SHUFPDMask, DL, MVT::i8));
-          return DAG.getNode(Opcode0, DL, VT0, DAG.getBitcast(SrcVT, Res),
-                             DAG.getUNDEF(SrcVT));
         }
       }
     }
@@ -49559,6 +49662,23 @@ static SDValue combineVectorPack(SDNode *N, SelectionDAG &DAG,
   if (SDValue V = combineHorizOpWithShuffle(N, DAG, Subtarget))
     return V;
 
+  // Try to fold PACKSS(NOT(X),NOT(Y)) -> NOT(PACKSS(X,Y)).
+  // Currently limit this to allsignbits cases only.
+  if (IsSigned &&
+      (N0.isUndef() || DAG.ComputeNumSignBits(N0) == SrcBitsPerElt) &&
+      (N1.isUndef() || DAG.ComputeNumSignBits(N1) == SrcBitsPerElt)) {
+    SDValue Not0 = N0.isUndef() ? N0 : IsNOT(N0, DAG);
+    SDValue Not1 = N1.isUndef() ? N1 : IsNOT(N1, DAG);
+    if (Not0 && Not1) {
+      SDLoc DL(N);
+      MVT SrcVT = N0.getSimpleValueType();
+      SDValue Pack =
+          DAG.getNode(X86ISD::PACKSS, DL, VT, DAG.getBitcast(SrcVT, Not0),
+                      DAG.getBitcast(SrcVT, Not1));
+      return DAG.getNOT(DL, Pack, VT);
+    }
+  }
+
   // Try to combine a PACKUSWB/PACKSSWB implemented truncate with a regular
   // truncate to create a larger truncate.
   if (Subtarget.hasAVX512() &&
@@ -54385,11 +54505,12 @@ static SDValue combineAndnp(SDNode *N, SelectionDAG &DAG,
   MVT VT = N->getSimpleValueType(0);
   int NumElts = VT.getVectorNumElements();
   unsigned EltSizeInBits = VT.getScalarSizeInBits();
+  SDLoc DL(N);
 
   // ANDNP(undef, x) -> 0
   // ANDNP(x, undef) -> 0
   if (N0.isUndef() || N1.isUndef())
-    return DAG.getConstant(0, SDLoc(N), VT);
+    return DAG.getConstant(0, DL, VT);
 
   // ANDNP(0, x) -> x
   if (ISD::isBuildVectorAllZeros(N0.getNode()))
@@ -54397,21 +54518,27 @@ static SDValue combineAndnp(SDNode *N, SelectionDAG &DAG,
 
   // ANDNP(x, 0) -> 0
   if (ISD::isBuildVectorAllZeros(N1.getNode()))
-    return DAG.getConstant(0, SDLoc(N), VT);
+    return DAG.getConstant(0, DL, VT);
 
   // ANDNP(x, -1) -> NOT(x) -> XOR(x, -1)
   if (ISD::isBuildVectorAllOnes(N1.getNode()))
-    return DAG.getNOT(SDLoc(N), N0, VT);
+    return DAG.getNOT(DL, N0, VT);
 
   // Turn ANDNP back to AND if input is inverted.
   if (SDValue Not = IsNOT(N0, DAG))
-    return DAG.getNode(ISD::AND, SDLoc(N), VT, DAG.getBitcast(VT, Not), N1);
+    return DAG.getNode(ISD::AND, DL, VT, DAG.getBitcast(VT, Not), N1);
+
+  // Fold for better commutatvity:
+  // ANDNP(x,NOT(y)) -> AND(NOT(x),NOT(y)) -> NOT(OR(X,Y)).
+  if (N1->hasOneUse())
+    if (SDValue Not = IsNOT(N1, DAG))
+      return DAG.getNOT(
+          DL, DAG.getNode(ISD::OR, DL, VT, N0, DAG.getBitcast(VT, Not)), VT);
 
   // Constant Folding
   APInt Undefs0, Undefs1;
   SmallVector<APInt> EltBits0, EltBits1;
   if (getTargetConstantBitsFromNode(N0, EltSizeInBits, Undefs0, EltBits0)) {
-    SDLoc DL(N);
     if (getTargetConstantBitsFromNode(N1, EltSizeInBits, Undefs1, EltBits1)) {
       SmallVector<APInt> ResultBits;
       for (int I = 0; I != NumElts; ++I)
