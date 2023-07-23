@@ -1,0 +1,52 @@
+_ = "-G Ninja -S runtimes -B build-libcxx"
+
+CMAKE_BUILD_TYPE = "RelWithDebInfo"
+CMAKE_C_COMPILER = "/usr/bin/clang"
+CMAKE_CXX_COMPILER = "/usr/bin/clang++"
+# CMAKE_C_COMPILER = "clang"
+# CMAKE_CXX_COMPILER = "clang++"
+# LLVM_DEFAULT_TARGET_TRIPLE = "x86_64-pc-linux-gnu"
+
+LLVM_ENABLE_RUNTIMES = "libcxx;libcxxabi;libunwind"
+# # LLVM_ENABLE_PROJECTS = 'clang-tools-extra'
+# # LLVM_ENABLE_PROJECTS = 'clang;clang-tools-extra'
+# # LLVM_ENABLE_RUNTIMES = 'compiler-rt;libunwind;libcxxabi;libcxx'
+# # LLVM_ENABLE_RUNTIMES = 'compiler-rt;libcxx;libcxxabi;libunwind'
+# # LLVM_ENABLE_RUNTIMES = 'libcxx;libcxxabi'
+# # LLVM_LIBC_FULL_BUILD = true
+# LLVM_CCACHE_BUILD = true
+# LLVM_USE_SPLIT_DWARF = true
+# LLVM_OPTIMIZED_TABLEGEN = true
+# BUILD_SHARED_LIBS = true
+# # LLVM_ENABLE_LLVM_LIBC = false
+# # LLVM_ENABLE_LIBCXX = false
+# LLVM_TARGETS_TO_BUILD = "X86"
+# LLVM_ENABLE_LLD = true
+
+# CLANG_DEFAULT_LINKER = "lld"
+# CLANG_DEFAULT_CXX_STDLIB = "libc++"
+# CLANG_DEFAULT_RTLIB = "compiler-rt"
+# CLANG_DEFAULT_UNWINDLIB = "libunwind"
+# # CLANG_DEFAULT_CXX_STDLIB = ""
+# # CLANG_DEFAULT_RTLIB = ""
+# # CLANG_DEFAULT_UNWINDLIB = ""
+# # CLANG_DEFAULT_OBJCOPY = "llvm-objcopy"
+
+# # libc++の設定
+# # LIBCXX_CXX_ABI = "libstdc++"
+# LIBCXX_CXX_ABI = "libcxxabi"
+# LIBCXX_ENABLE_STATIC_ABI_LIBRARY = false
+LIBCXX_STATICALLY_LINK_ABI_IN_STATIC_LIBRARY = true # 静的リンク時の-lc++abiを省略
+# # LIBCXX_ENABLE_ABI_LINKER_SCRIPT = false
+# LIBCXX_HAS_GCC_LIB = false
+# LIBCXX_HAS_ATOMIC_LIB = false
+
+# # libgcc_s.soへの依存を除去する https://discourse.llvm.org/t/how-to-build-libc-libunwind-independent-of-libgcc-s-so-use-compiler-rt-builtins-atomics/63141/4
+# LIBCXX_USE_COMPILER_RT = true
+# LIBCXXABI_USE_COMPILER_RT = true
+# LIBCXXABI_USE_LLVM_UNWINDER = true
+# LIBUNWIND_USE_COMPILER_RT = true
+# # LIBCXX_USE_COMPILER_RT = false
+# # LIBCXXABI_USE_COMPILER_RT = false
+# # LIBCXXABI_USE_LLVM_UNWINDER = false
+# # LIBUNWIND_USE_COMPILER_RT = false
