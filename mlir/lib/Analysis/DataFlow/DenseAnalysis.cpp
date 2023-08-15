@@ -15,10 +15,10 @@ using namespace mlir;
 using namespace mlir::dataflow;
 
 //===----------------------------------------------------------------------===//
-// AbstractDenseDataFlowAnalysis
+// AbstractDenseForwardDataFlowAnalysis
 //===----------------------------------------------------------------------===//
 
-LogicalResult AbstractDenseDataFlowAnalysis::initialize(Operation *top) {
+LogicalResult AbstractDenseForwardDataFlowAnalysis::initialize(Operation *top) {
   // Visit every operation and block.
   processOperation(top);
   for (Region &region : top->getRegions()) {
@@ -32,7 +32,7 @@ LogicalResult AbstractDenseDataFlowAnalysis::initialize(Operation *top) {
   return success();
 }
 
-LogicalResult AbstractDenseDataFlowAnalysis::visit(ProgramPoint point) {
+LogicalResult AbstractDenseForwardDataFlowAnalysis::visit(ProgramPoint point) {
   if (auto *op = llvm::dyn_cast_if_present<Operation *>(point))
     processOperation(op);
   else if (auto *block = llvm::dyn_cast_if_present<Block *>(point))
@@ -42,7 +42,7 @@ LogicalResult AbstractDenseDataFlowAnalysis::visit(ProgramPoint point) {
   return success();
 }
 
-void AbstractDenseDataFlowAnalysis::visitCallOperation(
+void AbstractDenseForwardDataFlowAnalysis::visitCallOperation(
     CallOpInterface call, AbstractDenseLattice *after) {
 
   const auto *predecessors =
@@ -74,7 +74,7 @@ void AbstractDenseDataFlowAnalysis::visitCallOperation(
   }
 }
 
-void AbstractDenseDataFlowAnalysis::processOperation(Operation *op) {
+void AbstractDenseForwardDataFlowAnalysis::processOperation(Operation *op) {
   // If the containing block is not executable, bail out.
   if (!getOrCreateFor<Executable>(op, op->getBlock())->isLive())
     return;
@@ -103,7 +103,7 @@ void AbstractDenseDataFlowAnalysis::processOperation(Operation *op) {
   visitOperationImpl(op, *before, after);
 }
 
-void AbstractDenseDataFlowAnalysis::visitBlock(Block *block) {
+void AbstractDenseForwardDataFlowAnalysis::visitBlock(Block *block) {
   // If the block is not executable, bail out.
   if (!getOrCreateFor<Executable>(block, block)->isLive())
     return;
@@ -160,7 +160,7 @@ void AbstractDenseDataFlowAnalysis::visitBlock(Block *block) {
   }
 }
 
-void AbstractDenseDataFlowAnalysis::visitRegionBranchOperation(
+void AbstractDenseForwardDataFlowAnalysis::visitRegionBranchOperation(
     ProgramPoint point, RegionBranchOpInterface branch,
     AbstractDenseLattice *after) {
   // Get the terminator predecessors.
@@ -220,8 +220,8 @@ void AbstractDenseDataFlowAnalysis::visitRegionBranchOperation(
 }
 
 const AbstractDenseLattice *
-AbstractDenseDataFlowAnalysis::getLatticeFor(ProgramPoint dependent,
-                                             ProgramPoint point) {
+AbstractDenseForwardDataFlowAnalysis::getLatticeFor(ProgramPoint dependent,
+                                                    ProgramPoint point) {
   AbstractDenseLattice *state = getLattice(point);
   addDependency(state, dependent);
   return state;
@@ -337,9 +337,8 @@ void AbstractDenseBackwardDataFlowAnalysis::visitBlock(Block *block) {
     // There may be a weird case where a terminator may be transferring control
     // either to the parent or to another block, so exit blocks and successors
     // are not mutually exclusive.
-    Operation *terminator = b->getTerminator();
-    return terminator && (terminator->hasTrait<OpTrait::ReturnLike>() ||
-                          isa<RegionBranchTerminatorOpInterface>(terminator));
+    return isa_and_nonnull<RegionBranchTerminatorOpInterface>(
+        b->getTerminator());
   };
   if (isExitBlock(block)) {
     // If this block is exiting from a callable, the successors of exiting from

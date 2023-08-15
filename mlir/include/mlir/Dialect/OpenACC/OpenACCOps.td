@@ -135,6 +135,16 @@ def DeclareAttr : OpenACC_Attr<"Declare", "declare"> {
   let assemblyFormat = "`<` struct(params) `>`";
 }
 
+// Attribute to attach functions that perform the pre/post allocation actions or
+// pre/post deallocation actions as described in section 2.13.
+def DeclareActionAttr : OpenACC_Attr<"DeclareAction", "declare_action"> {
+  let parameters = (ins OptionalParameter<"SymbolRefAttr">:$preAlloc,
+                        OptionalParameter<"SymbolRefAttr">:$postAlloc,
+                        OptionalParameter<"SymbolRefAttr">:$preDealloc,
+                        OptionalParameter<"SymbolRefAttr">:$postDealloc);
+  let assemblyFormat = "`<` struct(params) `>`";
+}
+
 // Used for data specification in data clauses (2.7.1).
 // Either (or both) extent and upperbound must be specified.
 def OpenACC_DataBoundsOp : OpenACC_Op<"bounds",
@@ -1320,6 +1330,73 @@ def OpenACC_GlobalDestructorOp : OpenACC_Op<"global_dtor",
   }];
 
   let hasVerifier = 0;
+}
+
+//===----------------------------------------------------------------------===//
+// 2.15.1 Routine Directive
+//===----------------------------------------------------------------------===//
+
+def OpenACC_RoutineOp : OpenACC_Op<"routine", [IsolatedFromAbove]> {
+  let summary = "acc routine operation";
+
+  let description = [{
+    The `acc.routine` operation is used to capture the clauses of acc
+    routine directive, including the associated function name. The associated
+    function keeps track of its corresponding routine declaration through
+    the `RoutineInfoAttr`.
+
+    Example:
+
+    ```mlir
+    func.func @acc_func(%a : i64) -> () attributes {acc.routine_info = #acc.routine_info<[@acc_func_rout1]>} {
+      return
+    }
+    acc.routine @acc_func_rout1 func(@acc_func) gang
+    ```
+  }];
+
+  let arguments = (ins SymbolNameAttr:$sym_name,
+                       SymbolNameAttr:$func_name,
+                       OptionalAttr<StrAttr>:$bind_name,
+                       OptionalAttr<UnitAttr>:$gang,
+                       OptionalAttr<UnitAttr>:$worker,
+                       OptionalAttr<UnitAttr>:$vector,
+                       OptionalAttr<UnitAttr>:$seq,
+                       OptionalAttr<UnitAttr>:$nohost,
+                       OptionalAttr<UnitAttr>:$implicit,
+                       OptionalAttr<APIntAttr>:$gangDim);
+
+  let extraClassDeclaration = [{
+    static StringRef getGangDimKeyword() { return "dim"; }
+  }];
+
+  let assemblyFormat = [{
+    $sym_name `func` `(` $func_name `)`
+    oilist (
+        `bind` `(` $bind_name `)`
+      | `gang` `` custom<RoutineGangClause>($gang, $gangDim)
+      | `worker` $worker
+      | `vector` $vector
+      | `seq` $seq
+      | `nohost` $nohost
+      | `implicit` $implicit
+    ) attr-dict-with-keyword
+  }];
+
+  let hasVerifier = 1;
+}
+
+def RoutineInfoAttr : OpenACC_Attr<"RoutineInfo", "routine_info"> {
+  let summary = "Keeps track of associated acc routine information";
+
+  let description = [{
+    This attribute is used to create the association between a function and
+    its `acc.routine` operation. A `func.func` uses this if its name
+    was referenced in an `acc routine` directive.
+  }];
+
+  let parameters = (ins ArrayRefParameter<"SymbolRefAttr", "">:$accRoutines);
+  let assemblyFormat = "`<` `[` `` $accRoutines `]` `>`";
 }
 
 //===----------------------------------------------------------------------===//

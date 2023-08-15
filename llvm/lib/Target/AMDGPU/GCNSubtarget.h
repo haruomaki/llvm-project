@@ -180,6 +180,8 @@ protected:
   bool HasArchitectedFlatScratch = false;
   bool EnableFlatScratch = false;
   bool HasArchitectedSGPRs = false;
+  bool HasGDS = false;
+  bool HasGWS = false;
   bool AddNoCarryInsts = false;
   bool HasUnpackedD16VMem = false;
   bool LDSMisalignedBug = false;
@@ -914,6 +916,11 @@ public:
     return HasPackedFP32Ops;
   }
 
+  // Has V_PK_MOV_B32 opcode
+  bool hasPkMovB32() const {
+    return GFX90AInsts;
+  }
+
   bool hasFmaakFmamkF32Insts() const {
     return getGeneration() >= GFX10 || hasGFX940Insts();
   }
@@ -1155,6 +1162,12 @@ public:
   /// \returns true if the architected SGPRs are enabled.
   bool hasArchitectedSGPRs() const { return HasArchitectedSGPRs; }
 
+  /// \returns true if Global Data Share is supported.
+  bool hasGDS() const { return HasGDS; }
+
+  /// \returns true if Global Wave Sync is supported.
+  bool hasGWS() const { return HasGWS; }
+
   /// \returns true if the machine has merged shaders in which s0-s7 are
   /// reserved by the hardware and user SGPRs start at s8
   bool hasMergedShaders() const {
@@ -1163,6 +1176,9 @@ public:
 
   // \returns true if the target supports the pre-NGG legacy geometry path.
   bool hasLegacyGeometry() const { return getGeneration() < GFX11; }
+
+  // \returns true if FP8/BF8 VOP1 form of conversion to F32 is unreliable.
+  bool hasCvtFP8VOP1Bug() const { return true; }
 
   /// \returns SGPR allocation granularity supported by the subtarget.
   unsigned getSGPRAllocGranule() const {

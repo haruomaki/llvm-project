@@ -29,11 +29,12 @@ public:
     case Header::Verbatim:
       return Input.H.verbatim().str();
     case Header::Physical:
-      bool IsSystem = false;
+      bool IsAngled = false;
       std::string FinalSpelling = Input.HS.suggestPathToFileForDiagnostics(
-          Input.H.physical(), Input.Main->tryGetRealPathName(), &IsSystem);
-      return IsSystem ? "<" + FinalSpelling + ">" : "\"" + FinalSpelling + "\"";
+          Input.H.physical(), Input.Main->tryGetRealPathName(), &IsAngled);
+      return IsAngled ? "<" + FinalSpelling + ">" : "\"" + FinalSpelling + "\"";
     }
+    llvm_unreachable("Unknown clang::include_cleaner::Header::Kind enum");
   }
 };
 

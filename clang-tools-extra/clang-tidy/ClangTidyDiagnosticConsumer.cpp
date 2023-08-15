@@ -161,10 +161,11 @@ ClangTidyError::ClangTidyError(StringRef CheckName,
 
 ClangTidyContext::ClangTidyContext(
     std::unique_ptr<ClangTidyOptionsProvider> OptionsProvider,
-    bool AllowEnablingAnalyzerAlphaCheckers)
+    bool AllowEnablingAnalyzerAlphaCheckers, bool EnableModuleHeadersParsing)
     : DiagEngine(nullptr), OptionsProvider(std::move(OptionsProvider)),
       Profile(false),
       AllowEnablingAnalyzerAlphaCheckers(AllowEnablingAnalyzerAlphaCheckers),
+      EnableModuleHeadersParsing(EnableModuleHeadersParsing),
       SelfContainedDiags(false) {
   // Before the first translation unit we can get errors related to command-line
   // parsing, use empty string for the file name in this case.
@@ -436,8 +437,11 @@ void ClangTidyDiagnosticConsumer::HandleDiagnostic(
     SmallString<100> Message;
     Info.FormatDiagnostic(Message);
     FullSourceLoc Loc;
-    if (Info.getLocation().isValid() && Info.hasSourceManager())
+    if (Info.hasSourceManager())
       Loc = FullSourceLoc(Info.getLocation(), Info.getSourceManager());
+    else if (Context.DiagEngine->hasSourceManager())
+      Loc = FullSourceLoc(Info.getLocation(),
+                          Context.DiagEngine->getSourceManager());
     Converter.emitDiagnostic(Loc, DiagLevel, Message, Info.getRanges(),
                              Info.getFixItHints());
   }
