@@ -137,6 +137,13 @@ getMutableSuccessorOperands(Block *block, unsigned successorIndex) {
   return succOps.getMutableForwardedOperands();
 }
 
+/// Return the operand range used to transfer operands from `block` to its
+/// successor with the given index.
+static OperandRange getSuccessorOperands(Block *block,
+                                         unsigned successorIndex) {
+  return getMutableSuccessorOperands(block, successorIndex);
+}
+
 /// Appends all the block arguments from `other` to the block arguments of
 /// `block`, copying their types and locations.
 static void addBlockArgumentsFromOther(Block *block, Block *other) {
@@ -175,8 +182,14 @@ public:
 
   /// Returns the arguments of this edge that are passed to the block arguments
   /// of the successor.
-  MutableOperandRange getSuccessorOperands() const {
-    return getMutableSuccessorOperands(fromBlock, successorIndex);
+  MutableOperandRange getMutableSuccessorOperands() const {
+    return ::getMutableSuccessorOperands(fromBlock, successorIndex);
+  }
+
+  /// Returns the arguments of this edge that are passed to the block arguments
+  /// of the successor.
+  OperandRange getSuccessorOperands() const {
+    return ::getSuccessorOperands(fromBlock, successorIndex);
   }
 };
 
@@ -262,7 +275,7 @@ public:
     assert(result != blockArgMapping.end() &&
            "Edge was not originally passed to `create` method.");
 
-    MutableOperandRange successorOperands = edge.getSuccessorOperands();
+    MutableOperandRange successorOperands = edge.getMutableSuccessorOperands();
 
     // Extra arguments are always appended at the end of the block arguments.
     unsigned extraArgsBeginIndex =
@@ -277,7 +290,8 @@ public:
       if (index >= result->second &&
           index < result->second + edge.getSuccessor()->getNumArguments()) {
         // Original block arguments to the entry block.
-        newSuccOperands[index] = successorOperands[index - result->second];
+        newSuccOperands[index] =
+            successorOperands[index - result->second].get();
         continue;
       }
 
@@ -306,7 +320,8 @@ public:
   /// Creates a switch op using `builder` which dispatches to the original
   /// successors of the edges passed to `create` minus the ones in `excluded`.
   /// The builder's insertion point has to be in a block dominated by the
-  /// multiplexer block.
+  /// multiplexer block. All edges to the multiplexer block must have already
+  /// been redirected using `redirectEdge`.
   void createSwitch(
       Location loc, OpBuilder &builder, CFGToSCFInterface &interface,
       const SmallPtrSetImpl<Block *> &excluded = SmallPtrSet<Block *, 1>{}) {
@@ -337,6 +352,8 @@ public:
     Block *defaultDest = caseDestinations.pop_back_val();
     ValueRange defaultArgs = caseArguments.pop_back_val();
 
+    assert(!builder.getInsertionBlock()->hasNoPredecessors() &&
+           "Edges need to be redirected prior to creating switch.");
     interface.createCFGSwitchOp(loc, builder, realDiscriminator, caseValues,
                                 caseDestinations, caseArguments, defaultDest,
                                 defaultArgs);
@@ -507,11 +524,13 @@ createSingleEntryBlock(Location loc, ArrayRef<Edge> entryEdges,
       loc, llvm::map_to_vector(entryEdges, std::mem_fn(&Edge::getSuccessor)),
       getSwitchValue, getUndefValue);
 
-  auto builder = OpBuilder::atBlockBegin(result.getMultiplexerBlock());
-  result.createSwitch(loc, builder, interface);
-
+  // Redirect the edges prior to creating the switch op.
+  // We guarantee that predecessors are up to date.
   for (Edge edge : entryEdges)
     result.redirectEdge(edge);
+
+  auto builder = OpBuilder::atBlockBegin(result.getMultiplexerBlock());
+  result.createSwitch(loc, builder, interface);
 
   return result;
 }
@@ -565,13 +584,24 @@ static FailureOr<StructuredLoopProperties> createSingleExitingLatch(
   // Since this is a loop, all back edges point to the same loop header.
   Block *loopHeader = backEdges.front().getSuccessor();
 
+  // Redirect the edges prior to creating the switch op.
+  // We guarantee that predecessors are up to date.
+
+  // Redirecting back edges with `shouldRepeat` as 1.
+  for (Edge backEdge : backEdges)
+    multiplexer.redirectEdge(backEdge, /*extraArgs=*/getSwitchValue(1));
+
+  // Redirecting exits edges with `shouldRepeat` as 0.
+  for (Edge exitEdge : exitEdges)
+    multiplexer.redirectEdge(exitEdge, /*extraArgs=*/getSwitchValue(0));
+
   // Create the new only back edge to the loop header. Branch to the
   // exit block otherwise.
   Value shouldRepeat = latchBlock->getArguments().back();
   {
     auto builder = OpBuilder::atBlockBegin(latchBlock);
     interface.createConditionalBranch(
-        builder.getUnknownLoc(), builder, shouldRepeat, loopHeader,
+        loc, builder, shouldRepeat, loopHeader,
         latchBlock->getArguments().take_front(loopHeader->getNumArguments()),
         /*falseDest=*/exitBlock,
         /*falseArgs=*/{});
@@ -602,14 +632,6 @@ static FailureOr<StructuredLoopProperties> createSingleExitingLatch(
       exitCombiner.combineExit(*terminator, getSwitchValue);
     }
   }
-
-  // Redirecting back edges with `shouldRepeat` as 1.
-  for (Edge backEdge : backEdges)
-    multiplexer.redirectEdge(backEdge, /*extraArgs=*/getSwitchValue(1));
-
-  // Redirecting exits edges with `shouldRepeat` as 0.
-  for (Edge exitEdge : exitEdges)
-    multiplexer.redirectEdge(exitEdge, /*extraArgs=*/getSwitchValue(0));
 
   return StructuredLoopProperties{latchBlock, /*condition=*/shouldRepeat,
                                   exitBlock};
@@ -657,7 +679,7 @@ transformToReduceLoop(Block *loopHeader, Block *exitBlock,
   // invalidated when mutating the operands through a different
   // `MutableOperandRange` of the same operation.
   SmallVector<Value> loopHeaderSuccessorOperands =
-      llvm::to_vector(getMutableSuccessorOperands(latch, loopHeaderIndex));
+      llvm::to_vector(getSuccessorOperands(latch, loopHeaderIndex));
 
   // Add all values used in the next iteration to the exit block. Replace
   // any uses that are outside the loop with the newly created exit block.
@@ -698,7 +720,13 @@ transformToReduceLoop(Block *loopHeader, Block *exitBlock,
     auto checkValue = [&](Value value) {
       Value blockArgument;
       for (OpOperand &use : llvm::make_early_inc_range(value.getUses())) {
-        if (loopBlocks.contains(use.getOwner()->getBlock()))
+        // Go through all the parent blocks and find the one part of the region
+        // of the loop. If the block is part of the loop, then the value does
+        // not escape the loop through this use.
+        Block *currBlock = use.getOwner()->getBlock();
+        while (currBlock && currBlock->getParent() != loopHeader->getParent())
+          currBlock = currBlock->getParentOp()->getBlock();
+        if (loopBlocks.contains(currBlock))
           continue;
 
         // Block argument is only created the first time it is required.
@@ -733,7 +761,7 @@ transformToReduceLoop(Block *loopHeader, Block *exitBlock,
 
           loopHeaderSuccessorOperands.push_back(argument);
           for (Edge edge : successorEdges(latch))
-            edge.getSuccessorOperands().append(argument);
+            edge.getMutableSuccessorOperands().append(argument);
         }
 
         use.set(blockArgument);
@@ -794,12 +822,13 @@ static FailureOr<SmallVector<Block *>> transformCyclesToSCFLoops(
     // First turn the cycle into a loop by creating a single entry block if
     // needed.
     if (edges.entryEdges.size() > 1) {
-      EdgeMultiplexer multiplexer = createSingleEntryBlock(
-          loopHeader->getTerminator()->getLoc(), edges.entryEdges,
-          getSwitchValue, getUndefValue, interface);
+      SmallVector<Edge> edgesToEntryBlocks;
+      llvm::append_range(edgesToEntryBlocks, edges.entryEdges);
+      llvm::append_range(edgesToEntryBlocks, edges.backEdges);
 
-      for (Edge edge : edges.backEdges)
-        multiplexer.redirectEdge(edge);
+      EdgeMultiplexer multiplexer = createSingleEntryBlock(
+          loopHeader->getTerminator()->getLoc(), edgesToEntryBlocks,
+          getSwitchValue, getUndefValue, interface);
 
       loopHeader = multiplexer.getMultiplexerBlock();
     }
@@ -929,9 +958,8 @@ static FailureOr<SmallVector<Block *>> transformToStructuredCFBranches(
   if (regionEntry->getNumSuccessors() == 1) {
     // Single successor we can just splice together.
     Block *successor = regionEntry->getSuccessor(0);
-    for (auto &&[oldValue, newValue] :
-         llvm::zip(successor->getArguments(),
-                   getMutableSuccessorOperands(regionEntry, 0)))
+    for (auto &&[oldValue, newValue] : llvm::zip(
+             successor->getArguments(), getSuccessorOperands(regionEntry, 0)))
       oldValue.replaceAllUsesWith(newValue);
     regionEntry->getTerminator()->erase();
 
@@ -1140,7 +1168,8 @@ static FailureOr<SmallVector<Block *>> transformToStructuredCFBranches(
   for (auto &&[block, valueRange] : createdEmptyBlocks) {
     auto builder = OpBuilder::atBlockEnd(block);
     LogicalResult result = interface.createStructuredBranchRegionTerminatorOp(
-        structuredCondOp->getLoc(), builder, structuredCondOp, valueRange);
+        structuredCondOp->getLoc(), builder, structuredCondOp, nullptr,
+        valueRange);
     if (failed(result))
       return failure();
   }
@@ -1153,7 +1182,7 @@ static FailureOr<SmallVector<Block *>> transformToStructuredCFBranches(
     assert(user->getNumSuccessors() == 1);
     auto builder = OpBuilder::atBlockTerminator(user->getBlock());
     LogicalResult result = interface.createStructuredBranchRegionTerminatorOp(
-        user->getLoc(), builder, structuredCondOp,
+        user->getLoc(), builder, structuredCondOp, user,
         static_cast<OperandRange>(
             getMutableSuccessorOperands(user->getBlock(), 0)));
     if (failed(result))

@@ -213,35 +213,6 @@ static Constant *ExtractConstantBytes(Constant *C, unsigned ByteStart,
 
   switch (CE->getOpcode()) {
   default: return nullptr;
-  case Instruction::Or: {
-    Constant *RHS = ExtractConstantBytes(CE->getOperand(1), ByteStart,ByteSize);
-    if (!RHS)
-      return nullptr;
-
-    // X | -1 -> -1.
-    if (ConstantInt *RHSC = dyn_cast<ConstantInt>(RHS))
-      if (RHSC->isMinusOne())
-        return RHSC;
-
-    Constant *LHS = ExtractConstantBytes(CE->getOperand(0), ByteStart,ByteSize);
-    if (!LHS)
-      return nullptr;
-    return ConstantExpr::getOr(LHS, RHS);
-  }
-  case Instruction::And: {
-    Constant *RHS = ExtractConstantBytes(CE->getOperand(1), ByteStart,ByteSize);
-    if (!RHS)
-      return nullptr;
-
-    // X & 0 -> 0.
-    if (RHS->isNullValue())
-      return RHS;
-
-    Constant *LHS = ExtractConstantBytes(CE->getOperand(0), ByteStart,ByteSize);
-    if (!LHS)
-      return nullptr;
-    return ConstantExpr::getAnd(LHS, RHS);
-  }
   case Instruction::LShr: {
     ConstantInt *Amt = dyn_cast<ConstantInt>(CE->getOperand(1));
     if (!Amt)
@@ -1974,8 +1945,13 @@ static Constant *foldGEPOfGEP(GEPOperator *GEP, Type *PointeeTy, bool InBounds,
 
     Type *CommonTy =
         Type::getIntNTy(LastIdxTy->getContext(), CommonExtendedWidth);
-    Idx0 = ConstantExpr::getSExtOrBitCast(Idx0, CommonTy);
-    LastIdx = ConstantExpr::getSExtOrBitCast(LastIdx, CommonTy);
+    if (Idx0->getType() != CommonTy)
+      Idx0 = ConstantFoldCastInstruction(Instruction::SExt, Idx0, CommonTy);
+    if (LastIdx->getType() != CommonTy)
+      LastIdx =
+          ConstantFoldCastInstruction(Instruction::SExt, LastIdx, CommonTy);
+    if (!Idx0 || !LastIdx)
+      return nullptr;
   }
 
   NewIndices.push_back(ConstantExpr::get(Instruction::Add, Idx0, LastIdx));
@@ -2193,11 +2169,13 @@ Constant *llvm::ConstantFoldGetElementPtr(Type *PointeeTy, Constant *C,
               : cast<FixedVectorType>(CurrIdx->getType())->getNumElements());
 
     if (!PrevIdx->getType()->isIntOrIntVectorTy(CommonExtendedWidth))
-      PrevIdx = ConstantExpr::getSExt(PrevIdx, ExtendedTy);
+      PrevIdx =
+          ConstantFoldCastInstruction(Instruction::SExt, PrevIdx, ExtendedTy);
 
     if (!Div->getType()->isIntOrIntVectorTy(CommonExtendedWidth))
-      Div = ConstantExpr::getSExt(Div, ExtendedTy);
+      Div = ConstantFoldCastInstruction(Instruction::SExt, Div, ExtendedTy);
 
+    assert(PrevIdx && Div && "Should have folded");
     NewIdxs[i - 1] = ConstantExpr::getAdd(PrevIdx, Div);
   }
 

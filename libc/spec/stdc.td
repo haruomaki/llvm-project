@@ -434,8 +434,13 @@ def StdC : StandardSpec<"stdc"> {
 
           FunctionSpec<"erff", RetValSpec<FloatType>, [ArgSpec<FloatType>]>,
 
+          FunctionSpec<"exp", RetValSpec<DoubleType>, [ArgSpec<DoubleType>]>,
           FunctionSpec<"expf", RetValSpec<FloatType>, [ArgSpec<FloatType>]>,
+
+          FunctionSpec<"exp2", RetValSpec<DoubleType>, [ArgSpec<DoubleType>]>,
           FunctionSpec<"exp2f", RetValSpec<FloatType>, [ArgSpec<FloatType>]>,
+
+          FunctionSpec<"expm1", RetValSpec<DoubleType>, [ArgSpec<DoubleType>]>,
           FunctionSpec<"expm1f", RetValSpec<FloatType>, [ArgSpec<FloatType>]>,
 
           FunctionSpec<"remainderf", RetValSpec<FloatType>, [ArgSpec<FloatType>, ArgSpec<FloatType>]>,
@@ -821,16 +826,6 @@ def StdC : StandardSpec<"stdc"> {
       ]
   >;
 
-  HeaderSpec Limits = HeaderSpec<
-      "limits.h",
-      [
-        Macro<"LONG_MAX">,
-      ],
-      [], // Types
-      [], // Enumerations
-      [] // Functions
-  >;
-
   HeaderSpec Errno = HeaderSpec<
       "errno.h",
       [
@@ -1148,7 +1143,6 @@ def StdC : StandardSpec<"stdc"> {
     StdIO,
     StdLib,
     IntTypes,
-    Limits,
     SetJmp,
     Signal,
     Threads,
