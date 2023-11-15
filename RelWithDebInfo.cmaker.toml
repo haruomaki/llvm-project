@@ -6,7 +6,7 @@ CMAKE_CXX_COMPILER = "/usr/bin/clang++"
 # CMAKE_C_COMPILER = "clang"
 # CMAKE_CXX_COMPILER = "clang++"
 LLVM_DEFAULT_TARGET_TRIPLE = "x86_64-pc-linux-gnu"
-CMAKE_INSTALL_PREFIX = "/opt/clang17"
+CMAKE_INSTALL_PREFIX = "/opt/clang18"
 
 LLVM_ENABLE_PROJECTS = 'clang;clang-tools-extra'
 LLVM_ENABLE_RUNTIMES = 'compiler-rt;libcxx;libcxxabi;libunwind'
